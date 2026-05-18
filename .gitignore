@@ -1,0 +1,11 @@
+# Local-only testing notes — not part of the shipped plugin.
+MANUAL_TIER2.md
+TIER2_RESULTS.md
+
+# Scratch / editor / OS
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+*.log
