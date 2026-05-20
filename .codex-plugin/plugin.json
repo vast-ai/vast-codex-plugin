@@ -1,0 +1,25 @@
+{
+  "name": "vastai",
+  "displayName": "Vast.ai",
+  "version": "0.1.0",
+  "description": "Rent, launch, monitor, and tear down Vast.ai GPU instances from Codex. Ships custom prompts (vast-setup, vast-search, vast-launch, vast-status, vast-cost) plus the full vastai CLI skill for natural-language operations.",
+  "author": {
+    "name": "Vast.ai",
+    "email": "support@vast.ai"
+  },
+  "license": "MIT",
+  "keywords": [
+    "vastai",
+    "vast-ai",
+    "gpu",
+    "cloud",
+    "infrastructure",
+    "ml",
+    "training"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vast-ai/vast-codex-plugin"
+  },
+  "logo": "assets/logo.svg"
+}
