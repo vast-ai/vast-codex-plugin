@@ -26,9 +26,9 @@ These rules apply to every invocation. Do not skip them.
    - **Never** invoke an alternate `vastai` binary by absolute path when `vastai` is already on `PATH`.
    - **Never** re-implement `vastai` subcommands by hitting `https://console.vast.ai/api/...` or `https://cloud.vast.ai/api/...` directly from `curl`, `python`, `node`, `httpie`, or `requests`. No exceptions.
    - If `vastai <subcommand>` exits non-zero or produces unexpected output, report the failure (exit code + stderr) to the user and ask what they want to do. Do not work around it.
-5. **Host actions are visible to renters and impact billing.** Listing, unlisting, price changes, maintenance windows, defrag, and `cleanup machine` all have side effects on live renters or on your earnings. Before running any of these, confirm with the user — quote the exact command back. Do not run them as a "let me just verify" probe.
+5. **Host actions are visible to renters and impact billing.** Listing, unlisting, price changes, maintenance windows, `defrag machines`, and `cleanup machine` all have side effects on live renters or on your earnings. Before running any of these, confirm with the user — quote the exact command back. Do not run them as a "let me just verify" probe.
 6. **`schedule maint` evicts live renters at the start time.** Never schedule a maintenance window without explicit user confirmation of the start date and duration. Active renters on the machine will be terminated when the window opens.
-7. **`defrag machines` is account-wide and disruptive.** It reorganizes your machines' instance layout to reclaim fragmented capacity. Do not run it speculatively — confirm with the user first.
+7. **`defrag machines` is disruptive.** It reorganizes the named machines' GPU assignments to free up larger multi-GPU offers — running instances on those machines may be reshuffled or interrupted. The subcommand is `defrag machines` (its own `--help` lies — the usage line reads `vastai defragment machines IDs`, but `vastai defragment machines …` returns `invalid choice` at the parser; only `defrag machines` actually executes). Takes positional machine IDs (e.g. `vastai defrag machines 100 101`); confirm the exact ID list with the user before running.
 
 ## Install
 
@@ -49,6 +49,10 @@ export VAST_API_KEY=<YOUR_API_KEY>
 
 vastai show user                                         # Verify auth
 ```
+
+> **Precedence trap.** Resolution: `--api-key` flag > `$VAST_API_KEY` > stored key. A `VAST_API_KEY` in the shell silently overrides whatever you just persisted with `vastai set api-key`. The CLI prints `⚠️ VAST_API_KEY is set in your environment and overrides the key you just saved` but it's easy to miss. For host work especially — where the persisted key may be a deliberately-scoped monitoring key — check `env | grep VAST_API_KEY` before authenticated calls and `unset` it if you don't want it active.
+
+> **2FA.** If the host account has 2FA enabled, run `vastai tfa login --method-type {totp,sms,email} --code <CODE>` once per shell — the CLI writes a session key to `~/.config/vastai/vast_tfa_key` and uses it transparently. Without an active TFA session, `show machines`, `show earnings`, `show user`, `metrics gpu*`, etc. all return a `401` whose body says *"requires you to have logged in using Two Factor Authentication."* Recommend prefixing the login command with `!` in the Claude transcript so the 6-digit code does not enter conversation history. See the "Common errors" table for the exact pattern.
 
 Machine registration (one-time, on the host machine itself): <https://vast.ai/console/host/setup/>
 
@@ -77,15 +81,21 @@ Available on every command:
 --version        Show CLI version
 ```
 
-## Query syntax (for `metrics` and `search` filters)
+## Filters and queries
 
-Filter expressions use operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `notin`.
-
-Quote the whole expression because `>` and `<` are shell metacharacters.
+**`metrics` subcommands use flags, NOT query-expression strings.** Each accepts a specific set of `--verified {true,false,all}`, `--datacenter {true,false,all}`, and `--rented` / `--gpu` filters — see each command's `--help`.
 
 ```bash
-vastai metrics gpu 'verified=true datacenter=true'
-vastai metrics gpu-trends 'gpu_name=RTX_4090 geolocation in [US,CA]'
+vastai metrics gpu --verified true --datacenter true                     # OK
+vastai metrics gpu-trends RTX_4090 --verified true                        # GPU name is POSITIONAL on gpu-trends
+vastai metrics gpu-locations --gpu "RTX 4090,H100_SXM" --datacenter true
+```
+
+**`search` subcommands DO take a query-expression string.** Operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `notin`. Quote the whole expression because `>` and `<` are shell metacharacters.
+
+```bash
+vastai search offers 'gpu_name=RTX_4090 num_gpus=1 verified=true'
+vastai search templates 'name=pytorch recommended=true'
 ```
 
 ## Commands
@@ -114,57 +124,64 @@ vastai remove defjob <id>                                # Remove default job
 
 **Pricing flags on `list machine`:**
 - `--price_gpu <$/hr>` — on-demand GPU price (per GPU per hour)
-- `--price_inetu <$/GB>` — inbound bandwidth
-- `--price_inetd <$/GB>` — outbound bandwidth
-- `--price_disk <$/GB/month>` — storage
-- `--price_min <$/hr>` — minimum acceptable bid (alternative to `set min-bid`)
-- `--discount_rate <0-1>` — long-rental discount
+- `--price_inetu <$/GB>` — internet upload (inbound) bandwidth
+- `--price_inetd <$/GB>` — internet download (outbound) bandwidth
+- `--price_disk <$/GB/month>` — storage (default: $0.10/GB/month)
+- `--price_min_bid <$/hr>` — per-GPU minimum bid floor (alternative to `set min-bid`). NOT `--price_min`.
+- `--discount_rate <0-1>` — max long-term prepay discount rate (default 0.4)
+- `--min_chunk <int>` — minimum GPUs per rental (default 1)
+- `--end_date <date>` / `--duration <e.g. "30 days">` — contract offer expiration
+- `--vol_size <GB>` / `--vol_price <$/GB/mo>` — volume contract offer alongside the machine offer
 
 > Price changes apply to **new** rentals only. Existing renters keep the price they signed up at unless they accept a price-increase. Use `vastai show machine <id> --raw | jq .` to verify your current listed prices.
 
 ### Maintenance
 
 ```bash
-vastai schedule maint <id> --start-date 2026-06-01T02:00:00Z --duration 4h
-vastai cancel maint <id>                                 # Cancel a scheduled window
-vastai show maints                                       # List all scheduled maintenance
+# --sdate is UNIX EPOCH SECONDS (not ISO 8601); --duration is HOURS as a float (not "4h").
+vastai schedule maint <id> --sdate $(date -u -d '2026-06-01 02:00' +%s) --duration 4 --maintenance_category power
+vastai schedule maint <id> --sdate 1812031200 --duration 0.5 --maintenance_category gpu     # 30-min GPU maintenance
+vastai cancel maint <id>                                                                    # Cancel a scheduled window
+vastai show maints                                                                          # List all scheduled maintenance
 ```
 
-> Active renters on the machine are terminated when the maintenance window opens. Schedule outside peak hours and notify renters where possible.
+> `--maintenance_category` accepts `power | internet | disk | gpu | software | other`. Active renters on the machine are terminated when the maintenance window opens. Schedule outside peak hours and notify renters where possible.
 
 ### Cleanup & defrag
 
 ```bash
-vastai cleanup machine <id>                              # Remove expired storage from terminated instances
-vastai defrag machines                                   # Account-wide: reorganize machines to reclaim fragmented capacity
+vastai cleanup machine <id>                              # Remove expired storage from terminated instances on a single machine
+vastai defrag machines <id1> <id2> ...                   # Defragment specific machines. POSITIONAL machine IDs. NOTE: the subcommand is `defrag machines` even though `--help` calls it `defragment machines` — that usage-line wording is misleading; only the abbreviated form executes.
 ```
 
-> Both are disruptive. `cleanup` is per-machine and reclaims disk; `defrag` is account-wide and reshuffles instance placement. Confirm with the user before running.
+> Both are disruptive. `cleanup` is per-machine and reclaims expired-instance disk. `defrag` takes a list of machine IDs and reshuffles GPU assignments on each to make multi-GPU offers possible — running instances may be interrupted. Confirm with the user before running, and always pass the exact ID list.
 
 ### Network disks & clusters
 
 ```bash
 vastai show network-disks                                # List network disks across your machines
-vastai add network-disk --cluster <cluster_id> --size <GB> --machine <machine_id>
-vastai remove network-disk <id>
+vastai add network-disk <machine_id> /mnt/disk1          # First time: positional MACHINES + MOUNT_PATH
+vastai add network-disk <machine_id> /mnt/disk1 -d 12345 # Subsequent attach: pass --disk_id (-d) of existing disk
 ```
 
 Network disks are a host-side storage primitive used internally by the marketplace. **Vast.ai does NOT offer network/shared volumes to renters** — `vastai create network-volume` is CLI plumbing for an unshipped product, not a feature. Don't tell renters they can use network-disks for shared storage.
+
+> The CLI has no `vastai remove network-disk` subcommand — detach/removal is currently console-only at <https://vast.ai/console/host/network-disks/>. Do not call `remove network-disk` (it returns `invalid choice`).
 
 ### Earnings & billing
 
 ```bash
 vastai show earnings                                     # Host earnings summary
 vastai show earnings --start-date 2026-01-01 --end-date 2026-02-01
-vastai show invoices-v1 --limit 50 --latest-first        # Always pass --limit (see pagination gotcha below)
-vastai show invoices-v1 --charges --limit 50 --latest-first
-vastai show invoices-v1 --invoices --limit 50 --latest-first
+vastai show invoices-v1 --limit <N> --latest-first        # Always pass --limit (see pagination gotcha below); cap is in `--help`
+vastai show invoices-v1 --charges --limit <N> --latest-first
+vastai show invoices-v1 --invoices --limit <N> --latest-first
 vastai show deposit <id>                                 # Reserved-rental deposit info
 ```
 
 `show invoices` (without `-v1`) is deprecated — use `show invoices-v1`.
 
-> **Pagination gotcha:** `show invoices-v1` and `show machines` print *"Fetch next page? (y/N)"* after the first page — even with `--raw`. Always pass `--limit N --latest-first` to short-circuit the prompt in non-interactive sessions.
+> **Pagination gotcha:** `show invoices-v1` prints *"Fetch next page? (y/N)"* after the first page — even with `--raw`. Pass `--limit N --latest-first` on `show invoices-v1` (both flags supported per `vastai show invoices-v1 --help`) to short-circuit the prompt. `show machines` is *not* paginated — `vastai show machines --help` lists no `--limit` flag, so pass none.
 
 ### Marketplace metrics
 
@@ -186,16 +203,17 @@ Use these to spot underserved GPU/region combinations and price your machines co
 vastai show user                                         # Account info
 vastai show api-keys                                     # List API keys
 vastai show api-key <id>
-vastai create api-key --name "host-monitoring" --permissions '{...}'  # Scoped key (e.g. read-only)
+vastai create api-key --name "host-monitoring" --permission_file ./perms.json  # Scoped key. --permission_file takes a FILE PATH to JSON, NOT inline JSON. See https://vast.ai/docs/cli/roles-and-permissions
 vastai delete api-key <id>
 vastai reset api-key                                     # Rotate main key (get new from console)
 
 vastai show audit-logs                                   # Account action history
 vastai show ipaddrs                                      # IP address history
 
-vastai tfa status
-vastai tfa totp-setup
-vastai tfa activate --code 123456
+# 2FA — see full subcommand reference in the `vastai` (renter) skill
+vastai tfa status                                                    # List configured methods
+vastai tfa totp-setup                                                # Start TOTP enrollment
+vastai tfa activate CODE --secret SECRET -t totp                     # CODE is POSITIONAL; --secret is required; -t selects sms/totp
 ```
 
 > Use scoped API keys for monitoring scripts — give them read-only permissions so a leaked key can't unlist machines or change prices.
@@ -203,15 +221,16 @@ vastai tfa activate --code 123456
 ### Teams
 
 ```bash
-vastai create team --name "ops"
+vastai create-team --team-name "ops"                                     # NOTE: hyphenated subcommand + --team-name. NOT `create team --name`.
+vastai create-team --team-name "ops" --transfer-credit 50                # Optionally seed from personal credit
 vastai destroy team
 vastai show members
-vastai invite member --email ops-engineer@example.com --role-id <role>
+vastai invite member --email ops-engineer@example.com --role <role-name> # --role, NOT --role-id
 vastai remove member <id>
-vastai create team-role --name "host-operator" --permissions '{...}'
+vastai create team-role --name "host-operator" --permissions ./role.json # --permissions takes FILE PATH to JSON, NOT inline
 vastai show team-roles
 vastai show team-role <id>
-vastai update team-role <id> --permissions '{...}'
+vastai update team-role <id> --permissions ./role.json                   # Same — file path
 vastai remove team-role <id>
 ```
 
@@ -221,12 +240,13 @@ Use team-roles to give ops engineers scoped access to your host operations witho
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `401 Unauthorized` / `Invalid or expired API key` | Invalid key OR scoped key lacks the permission set this command requires | Don't regenerate blindly. Run `vastai show api-keys --raw` to inspect the key's scope; widen permissions or use your primary key. Only `vastai set api-key <new>` if the key itself is wrong. |
-| `Your key lacks the machine_read permission group` | Scoped API key missing host permissions | Use your primary key, or recreate with `--permissions` including `machine_read` |
+| `401` + `"...requires you to have logged in using Two Factor Authentication"` in body | Account has 2FA enabled but no current TFA session — affects almost every host read (`show machines`, `show earnings`, `metrics gpu*`, `show user`) | Run `vastai tfa login --method-type {totp,sms,email} --code <CODE>` once per shell. Recommend `!` prefix to keep the 6-digit code out of the transcript. Do NOT rotate the API key — that won't fix it. |
+| `401 Unauthorized` / `Invalid or expired API key` (no 2FA wording) | Invalid key OR scoped key lacks the permission set this command requires | First `env | grep VAST_API_KEY` — a shell env var may shadow the stored key. Then `vastai show api-keys --raw` to inspect scope; widen permissions or use your primary key. Only `vastai set api-key <new>` if the key itself is wrong. |
+| `Your key lacks the machine_read permission group` | Scoped API key missing host permissions | Use your primary key, or recreate the scoped key passing `--permission_file ./perms.json` to `create api-key`, where the JSON grants the `machine_read` group. (Inline JSON via `--permissions` does not work — the flag takes a file path.) |
 | `Machine not found` | Wrong machine ID or machine deleted | `vastai show machines --raw` to list current IDs |
 | `Cannot unlist machine with active rentals` | Existing renters on the machine | Wait for rentals to end, or contact support to evict |
 | `Maintenance window conflicts with active rental` | Renter has time on the requested window | Choose a later start, or accept that the renter will be evicted |
-| `defrag in progress` | Another defrag is already running | Wait for it to finish; `vastai show machines --raw` shows defrag state |
+| `defrag in progress` | Another `defrag machines` operation is already running on this account | Wait for it to finish; `vastai show machines --raw` shows defrag state |
 
 ## Pricing & strategy tips
 

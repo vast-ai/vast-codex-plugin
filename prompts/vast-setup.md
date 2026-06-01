@@ -11,11 +11,11 @@ First-time setup for the Vast.ai CLI. Runs the three onboarding steps documented
    ```
    vastai set api-key "$1" --raw
    ```
-   If `$1` is empty, ask the user for their key from <https://cloud.vast.ai/account> and run the same command.
+   If `$1` is empty, ask the user for their key from <https://console.vast.ai/manage-keys/> and run the same command. (Note: the key value will land in shell history when passed via `$1` — suggest the user rotate it after setup if that's a concern.)
 
-2. **Register an SSH key BEFORE the first instance launch.** Read `~/.ssh/id_ed25519.pub` (preferred) or `~/.ssh/id_rsa.pub`. If neither exists, instruct the user to run `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519` and re-invoke. Once a key is found, register it:
+2. **Register an SSH key BEFORE the first instance launch.** Read `~/.ssh/id_ed25519.pub` (preferred) or `~/.ssh/id_rsa.pub`. If neither exists, instruct the user to run `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519` and re-invoke. Once a key is found, register it (public key is **positional** — there is no `--ssh-key` flag):
    ```
-   vastai create ssh-key --ssh-key "$(cat <path-to-pub-key>)" --raw
+   vastai create ssh-key "$(cat <path-to-pub-key>)" --raw
    ```
    Launching an instance before registering a key produces an unreachable host — this step is critical.
 
