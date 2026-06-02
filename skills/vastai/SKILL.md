@@ -30,7 +30,7 @@ These rules apply to every invocation. Do not skip them.
    - **Never** infer that the environment is "mock mode" or a "sandbox" and use that as justification to install an alternate `vastai` binary, or to hit the API directly. Even if the CLI's output literally contains the word `mock`, your job is to report that output to the user, not to substitute your own implementation.
    - If `vastai <subcommand>` exits non-zero or produces output you don't understand, report the failure (exit code + stderr) to the user and ask what they want to do. Do not work around it.
 8. **Always pass `--disk N`, `--ssh --direct`, and `--cancel-unavail` to `create instance` / `launch instance`.** Without `--disk` you get image-dependent defaults and surprise storage charges. Without `--ssh --direct` together you fall back to the slower proxy connection — `--ssh` alone is not enough. Without `--cancel-unavail`, an unavailable machine quietly produces a *stopped* instance that accrues disk charges while you poll forever for a `running` state it will never reach.
-9. **Pass `--limit N` on `show instances-v1` and `show invoices-v1`** to short-circuit the interactive `Fetch next page? (y/N)` prompt that fires after the first page (it blocks `--raw` / non-interactive sessions even with `--raw` set). The two subcommands have **different flag sets** — do not assume what works on one works on the other. When in doubt, run `vastai show <subcommand> --help` and read the actual flags. (Example trap: `--latest-first` exists on `invoices-v1` but not on `instances-v1`.)
+9. **Pass `--limit N` on `show instances-v1` and `show invoices-v1`** to short-circuit the interactive `Fetch next page? (y/N)` prompt that fires after the first page (it blocks `--raw` / non-interactive sessions even with `--raw` set). The two subcommands have **different flag sets** — do not assume what works on one works on the other. `show instances-v1 --limit` is capped at **1–25** (default 25) per `--help`; `show invoices-v1 --limit` has its own cap (read it from `--help`). When in doubt, run `vastai show <subcommand> --help`. (Example trap: `--latest-first` exists on `invoices-v1` but not on `instances-v1`.)
 10. **Vast.ai does not offer network/shared volumes.** Only local (per-instance) volumes. If the user asks for "shared storage across instances" or "persistent shared state for serverless workers," do NOT reach for `create network-volume` (it's CLI plumbing for an unshipped product and will leave the user with a broken architecture). The correct answer is: replicate data per instance, or use external object storage (S3/GCS/etc.) via `vastai cloud copy`.
 11. **When SSH fails (`Permission denied (publickey)`, `Connection refused`, hangs), pull `vastai logs <id>` FIRST — before any other recovery action.** The container's sshd writes its rejection reason to host logs that surface in `vastai logs`, and that text usually pins down the cause in one read. Common rejections you only see in logs: `Authentication refused: bad ownership or modes for file /root/.ssh/authorized_keys` (image bug — destroy + retry on a different host, not the same one); `Failed publickey for root from ... ssh2: <fingerprint>` (the wrong local key is being offered — check `ssh -v` for the offered key vs `vastai show ssh-keys` for the registered ones); container exited / sshd not started (image issue — `vastai logs <id> --tail 100` shows the startup failure). Do not loop on `attach ssh`, `reboot`, `destroy + relaunch` before reading logs — those are blind retries that burn minutes and money. Diagnostic discipline: `logs` then act, never act then guess.
 12. **`vastai create team` rebinds the calling API key's account context — treat as destructive.** Running `vastai create team --team-name <name>` switches the API key from the user's personal account to the newly-created team account. The team starts empty: no credit, no instances, no env-vars, no SSH keys. The personal account's resources are untouched but are no longer reachable from this key. Deleting the team afterwards leaves the key bound to a tombstone with no CLI recovery path. Before running, the agent must confirm with the user that they have a *separate* API key bound to the personal account, or that this is a throwaway key. The CLI shows no warning and has no `-y`-style guard.
@@ -135,13 +135,13 @@ Quote the whole expression — `>` and `<` are shell metacharacters. String valu
 
 **Sort direction:** plain field name is ascending; postfix `-` for descending (`-o 'dph_total-'`).
 
-**Hidden defaults on `search offers`:** Even with no `-n` flag, the CLI applies these implicit filters:
+**Hidden defaults on `search offers`:** Even with no `-n` flag, the CLI applies these implicit filters (per `vastai search offers --help` on current CLIs):
 
 ```
-verified=true   external=false   rentable=true   rented=false   disk_space>=8
+verified=true   external=false   rentable=true
 ```
 
-Roughly 90% of marketplace listings are hidden by these. To widen, **override the specific filter** (e.g. `verified=any` for unverified offers, `rentable=any` to include already-rented machines). **Do not pass `-n` / `--no-default`** to drop all four at once — that exposes the renter to unverified, external, or already-rented offers and produces unpredictable launches.
+To widen, **override the specific filter** (e.g. `verified=any` for unverified offers, `external=any` to include external hosts). **Do not pass `-n` / `--no-default`** to drop all three at once — that exposes the renter to unverified or external offers and produces unpredictable launches.
 
 ## Recommended Vast images
 
@@ -218,7 +218,7 @@ vastai accept price-increase <id>                        # Accept pending host p
 - `--onstart FILE` — Path to a startup script file
 - `--onstart-cmd CMD` — Inline startup script. The server enforces a length cap on `args`; payloads above the cap are rejected at `create instance` with `error 400/3471: Invalid args: len(args) > N` (`N` is whatever the server is currently configured to). If you hit it, **read the error for the current limit**, then either pass `--onstart FILE` (uploads the file, sidesteps the arg cap entirely) or gzip+base64 the script and decode inline — see "Long onstart scripts" below
 - `--entrypoint` / `--args ...` — Override entrypoint and pass args (args must be last)
-- `--bid_price PRICE` — Interruptible (spot) pricing in $/hr
+- `--bid_price PRICE` — Interruptible (spot) launches go through this same `create instance` command (there is no separate `vastai bid` subcommand); pass `--bid_price <USD/hr>` at or above the offer's `min_bid` field. Below the floor, the API rejects with `no_such_ask`. Check `min_bid` per offer in `search offers --type bid --raw` before deciding the bid.
 - `--template_hash HASH` — Create from template
 - `--create-volume <ASK_ID> --volume-size GB --mount-path /root/vol` — Attach new volume
 - `--link-volume <VOLUME_ID> --mount-path /root/vol` — Attach existing volume
@@ -314,7 +314,7 @@ vastai search offers --type bid                          # Interruptible (spot) 
 vastai search offers --type reserved                     # Reserved pricing
 vastai search offers 'verified=any rentable=any gpu_name=H100_SXM'  # Widen specific defaults — see "Hidden defaults" above
 vastai search volumes                                    # Volume offers (local only — Vast.ai does not offer network volumes)
-vastai search templates 'name=pytorch'                   # Templates (structured query — NOT free-text. Fields: name, creator_id, count_created, hash_id, image, tag, recommended, use_ssh, jup_direct, ssh_direct, …)
+vastai search templates 'name=pytorch'                   # Templates (structured query — NOT free-text. Fields: name, creator_id, count_created, hash_id, image, tag, recommended, use_ssh, jup_direct, ssh_direct, …). Pagination is server-side; this command does not accept --limit. Narrow the query (e.g. `recommended=true`) to control result size.
 vastai search templates 'count_created>100 recommended=true'
 vastai search benchmarks                                 # Benchmark results
 vastai search invoices 'amount_cents>3000'               # Invoice history (structured query, same syntax)
@@ -446,7 +446,7 @@ vastai search templates 'name=pytorch'    # Structured query — fields: name, c
 vastai create template --name "Qwen vLLM" --image vastai/vllm:@vastai-automatic-tag \
     --env '-p 8000:8000 -e MODEL_NAME=Qwen/Qwen2.5-3B-Instruct' --disk_space 40       # --disk_space, NOT --disk
 vastai update template <HASH_ID> --disk_space 100                                      # POSITIONAL is the template hash_id (string), not a numeric id. Flag is --disk_space.
-vastai delete template --template-id <numeric-id>                                      # NUMERIC id only. --hash-id <hash> is advertised in --help but returns 400 on current CLIs. Look up the numeric id with `vastai show templates --raw`.
+vastai delete template --template-id <numeric-id>                                      # NUMERIC `id` field only. --hash-id <hash> is advertised in --help but returns 400 on current CLIs. List-style discovery is through `vastai search templates '<query>' --raw` — read the `id` field from the result. There is no `vastai show templates` subcommand.
 vastai run benchmarks --template_hash <hash> --gpus RTX_4090 -y                        # --template_hash (or --template_id); --gpus comma-separated (e.g. "RTX_4090,RTX_3090"), supports inline Nx prefix ("2x RTX_4090"); --num_gpus N sets GPUs per instance when no Nx prefix; -y skips the cost confirmation. See https://docs.vast.ai/cli/reference/run-benchmarks for examples.
 ```
 
@@ -458,7 +458,7 @@ vastai run benchmarks --template_hash <hash> --gpus RTX_4090 -y                 
 vastai set api-key <key>                                 # Save API key locally
 vastai show api-key <id>                                 # Show a specific key
 vastai show api-keys                                     # List all your API keys
-vastai create api-key --name "ci" --permission_file ./perms.json   # Create restricted key. --permission_file takes a FILE PATH to valid JSON (NOT inline JSON). Malformed/empty JSON returns HTTP 400 with no body — validate the file with `jq . perms.json` first. Requires an admin-scope key. See https://vast.ai/docs/cli/roles-and-permissions
+vastai create api-key --name "ci" --permission_file ./perms.json   # Create restricted key. --permission_file takes a FILE PATH to valid JSON (NOT inline JSON). Two distinct HTTP 400 cases — same status code, different cause: (a) malformed/empty JSON → validate with `jq . perms.json` first; (b) the CALLING key isn't admin-scope → no JSON change will help, the user needs an admin key. If a `jq`-valid file still 400s, surface this as a scope issue to the user, don't retry with permission tweaks. See https://vast.ai/docs/cli/roles-and-permissions
 vastai delete api-key <id>
 vastai reset api-key                                     # Reset main key (get new from console)
 vastai show user                                         # Account info + credit balance
@@ -467,7 +467,7 @@ vastai show connections                                  # Cloud storage connect
 vastai show ipaddrs                                      # IP address history
 vastai transfer credit --recipient EMAIL --amount 10
 vastai show subaccounts
-vastai create subaccount --email sub@example.com --username sub --password '<pw>' --type host    # --type is `host` or `client`. All four flags are required.
+vastai create subaccount --email sub@example.com --username sub --password '<pw>' --type host    # --type is `host` or `client`. All four flags are required. Requires an admin-scope API key — scoped/read-only keys return HTTP 400 with no useful body.
 ```
 
 ### Environment variables
@@ -529,6 +529,8 @@ vastai remove team-role <id>
 ```
 
 ### 2FA
+
+**All `tfa *` subcommands require a personal-context API key**, not a team-context key. A team-context key returns `403 "2FA actions are available in a Team Context. Please switch to your personal context and try again."` (the wording is misleading — it means tfa actions are NOT available in team context). Before any `tfa` call, confirm the user is operating with their personal-account key (`vastai show members --raw` returns `[]`).
 
 ```bash
 # Setup

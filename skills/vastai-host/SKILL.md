@@ -172,7 +172,7 @@ Network disks are a host-side storage primitive used internally by the marketpla
 
 ```bash
 vastai show earnings                                     # Host earnings summary
-vastai show earnings --start-date 2026-01-01 --end-date 2026-02-01
+vastai show earnings --start_date 2026-01-01 --end_date 2026-02-01    # UNDERSCORES — show earnings differs from show invoices-v1 (which uses hyphenated --start-date / --end-date). Verify each command's flag form with `vastai <cmd> --help` before assuming.
 vastai show invoices-v1 --limit <N> --latest-first        # Always pass --limit (see pagination gotcha below); cap is in `--help`
 vastai show invoices-v1 --charges --limit <N> --latest-first
 vastai show invoices-v1 --invoices --limit <N> --latest-first
