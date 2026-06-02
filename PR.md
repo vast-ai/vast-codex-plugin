@@ -52,3 +52,37 @@
 - `vast-cost.md`, `vast-status.md`: `-a` on `show instances-v1` / `--limit <N>` on `show invoices-v1` to short-circuit the interactive pagination prompt that fires under `--raw`; `--latest-first` noted as invoices-v1 only
 
 Verified end-to-end via launch → poll → ssh → `nvidia-smi` → destroy runs on two GTX 1080-class hosts in the source `vast-claude-plugin` branch, plus targeted smoke tests for each newly-corrected flag invocation.
+
+## Follow-up fixes from live codex testing (2026-06-02)
+
+The initial audit was against `vastai <cmd> --help` + the `vast.py` source — both correct as references but unable to catch CLI bugs that only surface at runtime. A live test run against a real Vast.ai account surfaced 9 additional issues. Each was patched in the commits below.
+
+**Removed entirely:**
+
+- **`vastai execute` is currently CLI-broken.** Even a correctly-formed `vastai execute <id> 'ls -la /workspace'` against a stopped instance crashes with `AttributeError: 'str' object has no attribute 'get'` (with or without `--raw`). The earlier audit had documented its `ls`/`rm`/`du` allow-list and stopped-only restriction — both still apply on paper, but the command returns no useful output today. The skill no longer recommends it; the "Logs & exec" section was renamed to "Logs" and a one-liner steers agents away in case they rediscover `execute` from `vastai --help`. (`b654dfb`)
+
+**Replaced silently-wrong skill claims:**
+
+- **`create ssh-key` takes pubkey CONTENTS, not a path.** The CLI silently accepts any string and stores the literal "/path/to/file" text — no error, but no client matches. Skill examples now use `"$(cat ~/.ssh/id_ed25519.pub)"`.
+- **`show invoices-v1` requires `-c` or `-i`** (charges or invoices). The bare form fails. Skill no longer leads with the bare example and now prefixes the billing section with the requirement.
+- **`vastai copy` doesn't work on stopped instances either.** The in-instance rsync daemon isn't running, so `vastai copy <id>:/path ./local` fails with `rsync: Unknown module '<id>'`. Combined with the `execute` crash, **there is NO working way to inspect a stopped instance's files** — agent must `start instance`, wait for `running`, then SSH or copy.
+
+**Documented version skew / gotchas surfaced by the live run:**
+
+- **`create-team` subcommand naming.** Newer CLIs accept hyphenated `create-team`; older CLIs use `create team`. Skill now tells the agent to check `vastai --help | grep -E 'create[ -]team'` and try the other form on parser rejection.
+- **`invite member --role <name>`** returns HTTP 500 on unknown roles. Roles are team-defined, not a fixed enum. Skill now requires `vastai show team-roles` first.
+- **`run benchmarks --endpoint_name`** must match `[a-z0-9_-]+`. Dots, slashes, spaces fail with API 400 `Value error, contains disallowed shell characters`.
+- **`create workergroup`, `create api-key`** require admin-scope keys — scoped/read-only keys return HTTP 403 and 400 respectively. Skill also notes that malformed `--permission_file` JSON returns 400 with no body, so validate with `jq .` first.
+
+**Account-context errors documented as one-liners:**
+
+- **`create ssh-key` under a team-context API key** returns HTTP 400 `team SSH keys are not supported`. Keys must be registered against a personal account.
+- **`create-team` / `create team` while already a member** returns `Cannot create a team within a team`. Skill tells the agent to `vastai show members --raw` first.
+
+Each follow-up fix is verified by re-running the same prompts in `TEST_PROMPTS.txt` and `TEST_PROMPTS_2.txt` against the live account. Final commit log:
+
+```
+9a25786  fix(skill): note team-context errors for ssh-key + create-team
+d3be258  fix(skill): patch 7 issues found in live testing on 2026-06-02
+b654dfb  fix(skill): remove vastai execute recommendation — broken upstream
+```
