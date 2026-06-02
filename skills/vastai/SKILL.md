@@ -33,6 +33,7 @@ These rules apply to every invocation. Do not skip them.
 9. **Pass `--limit N` on `show instances-v1` and `show invoices-v1`** to short-circuit the interactive `Fetch next page? (y/N)` prompt that fires after the first page (it blocks `--raw` / non-interactive sessions even with `--raw` set). The two subcommands have **different flag sets** — do not assume what works on one works on the other. When in doubt, run `vastai show <subcommand> --help` and read the actual flags. (Example trap: `--latest-first` exists on `invoices-v1` but not on `instances-v1`.)
 10. **Vast.ai does not offer network/shared volumes.** Only local (per-instance) volumes. If the user asks for "shared storage across instances" or "persistent shared state for serverless workers," do NOT reach for `create network-volume` (it's CLI plumbing for an unshipped product and will leave the user with a broken architecture). The correct answer is: replicate data per instance, or use external object storage (S3/GCS/etc.) via `vastai cloud copy`.
 11. **When SSH fails (`Permission denied (publickey)`, `Connection refused`, hangs), pull `vastai logs <id>` FIRST — before any other recovery action.** The container's sshd writes its rejection reason to host logs that surface in `vastai logs`, and that text usually pins down the cause in one read. Common rejections you only see in logs: `Authentication refused: bad ownership or modes for file /root/.ssh/authorized_keys` (image bug — destroy + retry on a different host, not the same one); `Failed publickey for root from ... ssh2: <fingerprint>` (the wrong local key is being offered — check `ssh -v` for the offered key vs `vastai show ssh-keys` for the registered ones); container exited / sshd not started (image issue — `vastai logs <id> --tail 100` shows the startup failure). Do not loop on `attach ssh`, `reboot`, `destroy + relaunch` before reading logs — those are blind retries that burn minutes and money. Diagnostic discipline: `logs` then act, never act then guess.
+12. **`vastai create team` rebinds the calling API key's account context — treat as destructive.** Running `vastai create team --team-name <name>` switches the API key from the user's personal account to the newly-created team account. The team starts empty: no credit, no instances, no env-vars, no SSH keys. The personal account's resources are untouched but are no longer reachable from this key. Deleting the team afterwards leaves the key bound to a tombstone with no CLI recovery path. Before running, the agent must confirm with the user that they have a *separate* API key bound to the personal account, or that this is a throwaway key. The CLI shows no warning and has no `-y`-style guard.
 
 ## Install
 
@@ -421,7 +422,7 @@ vastai delete endpoint <id>
 vastai get endpt-logs <id>
 
 vastai show workergroups
-vastai create workergroup --template_hash <HASH> --endpoint_name "qwen25-3b" --cold_workers 1   # No --name flag — identity is template + endpoint. Use --template_hash (or --template_id) + --endpoint_name (or --endpoint_id). Pass --search_params if not inheriting from template. Requires an admin-scope API key — scoped/read-only keys return HTTP 403.
+vastai create workergroup --template_hash <HASH> --endpoint_name "qwen25-3b" --cold_workers 1   # No --name flag — identity is template + endpoint. Use --template_hash (or --template_id) + --endpoint_name (or --endpoint_id). Pass --search_params if not inheriting from template. Requires an admin-scope API key AND a positive deposited balance on the team account (separate from regular credit; fund via prepay or auto-recharge). Endpoint operations return 403 without both.
 vastai update workergroup <id> --endpoint_id <endpoint_id> [options]    # --endpoint_id is REQUIRED per the usage line (vastai update workergroup --help)
 vastai update workers <id>                               # Trigger rolling worker update
 vastai update workers <id> --cancel                      # Cancel an in-progress rollout
@@ -445,9 +446,11 @@ vastai search templates 'name=pytorch'    # Structured query — fields: name, c
 vastai create template --name "Qwen vLLM" --image vastai/vllm:@vastai-automatic-tag \
     --env '-p 8000:8000 -e MODEL_NAME=Qwen/Qwen2.5-3B-Instruct' --disk_space 40       # --disk_space, NOT --disk
 vastai update template <HASH_ID> --disk_space 100                                      # POSITIONAL is the template hash_id (string), not a numeric id. Flag is --disk_space.
-vastai delete template --template-id <id>                                              # OR: --hash-id <hash>. NO POSITIONAL — must use one of the two flags.
-vastai run benchmarks --template_hash <hash> --gpus RTX_4090                           # --template_hash (NOT --template); --gpus (plural, comma-separated, NOT --gpu-name). Add --num_gpus N for multi-GPU benches. If you also pass --endpoint_name, it must be `[a-z0-9_-]+` only — `.`, `/`, spaces, etc. fail with API 400 "Value error, contains disallowed shell characters".
+vastai delete template --template-id <numeric-id>                                      # NUMERIC id only. --hash-id <hash> is advertised in --help but returns 400 on current CLIs. Look up the numeric id with `vastai show templates --raw`.
+vastai run benchmarks --template_hash <hash> --gpus RTX_4090 -y                        # --template_hash (or --template_id); --gpus comma-separated (e.g. "RTX_4090,RTX_3090"), supports inline Nx prefix ("2x RTX_4090"); --num_gpus N sets GPUs per instance when no Nx prefix; -y skips the cost confirmation. See https://docs.vast.ai/cli/reference/run-benchmarks for examples.
 ```
+
+> If `run benchmarks` returns `400 endpoint_name: Value error, contains disallowed shell characters`, the auto-generated endpoint name on the user's CLI version isn't passing the API's `[a-z0-9_-]+` check. Pass the response back to the user verbatim and suggest they upgrade `vastai` (`pip install -U vastai`) or check the latest CLI release; don't retry or rewrite the command from this side.
 
 ### Account & API keys
 
@@ -472,8 +475,7 @@ vastai create subaccount --email sub@example.com --username sub --password '<pw>
 User-scoped environment variables injected into instances at launch — for API tokens (HuggingFace, OpenAI, etc.) and model config.
 
 ```bash
-vastai show env-vars --raw                               # List names only (values are masked as '*****')
-vastai show env-vars -s --raw                            # Include values (-s / --show-values is required to reveal them)
+vastai show env-vars --raw                               # List names only — values are ALWAYS masked as '********', even with -s/--show-values (verified CLI 1.0.13). There is no working way to retrieve env-var values via the CLI; treat them as write-only.
 vastai create env-var HF_TOKEN hf_abc123 --raw           # Create (value passed literally)
 vastai update env-var HF_TOKEN hf_new456 --raw
 vastai delete env-var HF_TOKEN --raw
@@ -508,15 +510,17 @@ vastai show deposit <id>                                 # Reserved instance dep
 
 ### Teams
 
-**Subcommand-name version skew on team creation.** Newer CLIs expose `vastai create-team` (hyphenated, with `--team-name`); older CLIs expose `vastai create team` (with a space, taking `--team-name` or just a positional name). Before running, check which form your CLI parses: `vastai --help 2>&1 | grep -E 'create[ -]team'`. The skill below shows the hyphenated form; if the parser rejects it, drop the hyphen and retry. Either way, the flag is `--team-name`, not `--name`.
+**`create team` is destructive: it rebinds your API key's account context.** See Critical Rule #12. The CLI shows no warning. Documenting the syntax for completeness — the agent must not run it without confirming per rule 12.
+
+**Subcommand-name version skew.** Primary form on current CLIs is `vastai create team` (space, with `--team-name`). Some CLIs expose `vastai create-team` (hyphenated). If the space form returns `invalid choice`, try hyphenated; if hyphenated returns `invalid choice`, try space. Either way the flag is `--team-name`, not `--name`.
 
 ```bash
-vastai create-team --team-name "myteam"                  # Hyphenated subcommand on newer CLIs. If parser rejects, try `vastai create team --team-name "myteam"`. Returns "Cannot create a team within a team" if the account is already in a team — check `vastai show members --raw` first; if it returns members, you're in a team and must leave/destroy it before creating a new one.
-vastai create-team --team-name "myteam" --transfer-credit 50  # Optionally seed from personal credit
-vastai destroy team
-vastai show members
+vastai show members --raw                                # Check membership FIRST — non-empty means you're already in a team; create team will fail with "Cannot create a team within a team".
+vastai create team --team-name "myteam"                  # DESTRUCTIVE — rebinds API key context (rule 12). Primary form on current CLIs. If parser returns invalid choice, try `vastai create-team --team-name "myteam"`.
+vastai create team --team-name "myteam" --transfer-credit 50  # Optionally seed from personal credit. Still destructive — rule 12 applies.
+vastai destroy team                                      # Note: deleting a team after `create team` leaves any key bound to that team in a tombstone state — see rule 12.
 vastai show team-roles                                   # ALWAYS run this first when inviting — roles are TEAM-DEFINED, not a fixed enum. "billing-admin", "viewer" etc. are NOT preset; using an unknown role name triggers a generic HTTP 500.
-vastai invite member --email user@example.com --role <role-name>     # --role, NOT --role-id. <role-name> must come from `show team-roles`.
+vastai invite member --email user@example.com --role <role-name>     # Roles are team-defined; run `vastai show team-roles --raw` first. HTTP 500 on invite is seen both for unknown roles AND for valid roles returned by show team-roles. Surface the 500 to the user rather than retrying.
 vastai remove member <id>
 vastai create team-role --name "viewer" --permissions ./role.json    # --permissions takes a FILE PATH to JSON, NOT inline
 vastai show team-role <id>
