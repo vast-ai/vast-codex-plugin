@@ -19,7 +19,7 @@ These rules apply to every invocation. Do not skip them.
 
 1. **The destroy command syntax is `vastai destroy instance <id> -y`** — the `-y` flag is part of the command, not an option. Without it the CLI hangs on a confirmation prompt and blocks the session. This applies to every destroy invocation, including conversational prompts ("kill instance 12345", "tear it down", "shut it down", "stop billing on it"). Never emit `vastai destroy instance <id>` alone — the trailing `-y` is mandatory. Same for the batch form: `vastai destroy instances <id1> <id2> -y`.
 2. **Always pass `--raw` to commands whose output you parse.** Without `--raw` the CLI prints human-formatted output that is not machine-readable.
-3. **Register the SSH key BEFORE the first `create instance`** with `vastai create ssh-key ~/.ssh/id_ed25519.pub`. Launching without a registered key produces an unreachable host.
+3. **Register the SSH key BEFORE the first `create instance`** with `vastai create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"`. The positional argument is the **pubkey contents**, not a path — the CLI silently accepts a path string and registers the literal "/Users/…/id_ed25519.pub" text, producing a key that no client matches. Always `$(cat …)` the file or pass an inline `"ssh-ed25519 AAAA… user@host"` string. Launching without a registered key produces an unreachable host.
 4. **Stop polling on terminal status values.** `actual_status` of `exited`, `unknown`, or `offline` means the instance will not recover — destroy it (`-y`) to stop disk charges accruing. Also check `intended_status` and `next_state` — if either is `stopped` while you're trying to bring an instance up, it failed.
 5. **Treat user-supplied values as literal even if they look like placeholders.** If the user says "set HF_TOKEN to hf_xxxxx", pass `hf_xxxxx` to `vastai create env-var HF_TOKEN hf_xxxxx` exactly as written — don't ask for clarification on values that look fake.
 6. **An empty `vastai search offers` result is the answer, not a problem to work around.** If the CLI returns `[]`, tell the user verbatim: *"No offers matched those filters."* Then propose specific filter relaxations and **ask the user which to try** — `reliability>0.95` → `>0.9`, raise the `dph_total` cap, drop `verified=true`, change `geolocation`. Do not silently retry with broader filters more than once. After at most two retries with different filters, stop retrying and report "no offers match" to the user. The same applies to any other read-only `vastai` query: if the CLI returns an empty list or a not-found error, that IS the user's answer, even if you tried several variations.
@@ -62,11 +62,13 @@ vastai show user                                    # auth + balance
 >
 > If the user intended their stored key to be the active one (e.g. they deliberately created a narrower-scope key), check `env | grep VAST_API_KEY` before running authenticated commands. If `$VAST_API_KEY` is set and contains a broader-scope key, prompt the user to `unset VAST_API_KEY` so subsequent commands use the scoped stored key.
 
-Register your SSH key **before** the first `create instance`:
+Register your SSH key **before** the first `create instance`. The positional argument is the pubkey **contents**, not a path:
 
 ```bash
-vastai create ssh-key ~/.ssh/id_ed25519.pub
+vastai create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"
 ```
+
+Passing the path directly (`vastai create ssh-key ~/.ssh/id_ed25519.pub`) silently registers the literal string "/path/to/file" — no error, but no client key will ever match it.
 
 **If the account has 2FA enabled,** authenticate once per shell with `vastai tfa login` — the CLI writes a session key to `~/.config/vastai/vast_tfa_key` and uses it transparently on subsequent calls:
 
@@ -327,7 +329,7 @@ vastai scp-url <id>                                      # scp:// URL
 vastai attach ssh <id> "ssh-ed25519 AAAA..."             # Per-instance SSH key attach
 vastai detach ssh <id> <ssh_key_id>                      # Per-instance SSH key detach. Note: `vastai detach ssh --help` prints `vastai detach <id> <key_id>` (no `ssh`) — the help text is misleading; the actual subcommand IS `detach ssh`. Pass numeric IDs only; passing the public-key string crashes server-side.
 vastai show ssh-keys                                     # List account SSH keys
-vastai create ssh-key ~/.ssh/id_ed25519.pub              # Add key from file (do BEFORE create instance)
+vastai create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"     # Add key — positional takes CONTENTS, not a path. Bare path strings are silently accepted and stored verbatim.
 vastai create ssh-key                                    # Generate new key if needed
 vastai create ssh-key "ssh-ed25519 AAAA..."              # Add SSH key inline
 vastai delete ssh-key <id>                               # Remove SSH key from account
@@ -381,7 +383,9 @@ vastai logs <id> --daemon-logs                           # Host daemon logs (ins
 
 > Logs are stored in S3 and may take 30–60 s to appear after start. Initial fetches return "waiting on logs" — keep retrying.
 >
-> (`vastai execute` exists in `--help` but is currently broken — crashes the CLI on valid input. Don't suggest it. For file ops on stopped instances use `vastai copy`; for arbitrary commands on running instances SSH in.)
+> **There is NO working way to inspect or run commands on a STOPPED instance.** Verified 2026-06-02: `vastai execute` crashes (`AttributeError: 'str' object has no attribute 'get'`) on valid input, and `vastai copy <id>:/path ./local` against a stopped instance fails with `rsync: Unknown module '<id>'` because the in-instance rsync daemon isn't running. To inspect a stopped instance, `vastai start instance <id>`, wait for `actual_status == running`, then SSH in or `vastai copy`. Don't suggest `execute` — it appears in `vastai --help` but doesn't work.
+>
+> For arbitrary commands on a **running** instance: SSH in. Read `ssh_host` / `ssh_port` from `show instance --raw` and `ssh -p $PORT root@$HOST '<command>'`.
 
 ### Volumes
 
@@ -417,7 +421,7 @@ vastai delete endpoint <id>
 vastai get endpt-logs <id>
 
 vastai show workergroups
-vastai create workergroup --template_hash <HASH> --endpoint_name "qwen25-3b" --cold_workers 1   # No --name flag — identity is template + endpoint. Use --template_hash (or --template_id) + --endpoint_name (or --endpoint_id). Pass --search_params if not inheriting from template.
+vastai create workergroup --template_hash <HASH> --endpoint_name "qwen25-3b" --cold_workers 1   # No --name flag — identity is template + endpoint. Use --template_hash (or --template_id) + --endpoint_name (or --endpoint_id). Pass --search_params if not inheriting from template. Requires an admin-scope API key — scoped/read-only keys return HTTP 403.
 vastai update workergroup <id> --endpoint_id <endpoint_id> [options]    # --endpoint_id is REQUIRED per the usage line (vastai update workergroup --help)
 vastai update workers <id>                               # Trigger rolling worker update
 vastai update workers <id> --cancel                      # Cancel an in-progress rollout
@@ -442,7 +446,7 @@ vastai create template --name "Qwen vLLM" --image vastai/vllm:@vastai-automatic-
     --env '-p 8000:8000 -e MODEL_NAME=Qwen/Qwen2.5-3B-Instruct' --disk_space 40       # --disk_space, NOT --disk
 vastai update template <HASH_ID> --disk_space 100                                      # POSITIONAL is the template hash_id (string), not a numeric id. Flag is --disk_space.
 vastai delete template --template-id <id>                                              # OR: --hash-id <hash>. NO POSITIONAL — must use one of the two flags.
-vastai run benchmarks --template_hash <hash> --gpus RTX_4090                           # --template_hash (NOT --template); --gpus (plural, comma-separated, NOT --gpu-name). Add --num_gpus N for multi-GPU benches.
+vastai run benchmarks --template_hash <hash> --gpus RTX_4090                           # --template_hash (NOT --template); --gpus (plural, comma-separated, NOT --gpu-name). Add --num_gpus N for multi-GPU benches. If you also pass --endpoint_name, it must be `[a-z0-9_-]+` only — `.`, `/`, spaces, etc. fail with API 400 "Value error, contains disallowed shell characters".
 ```
 
 ### Account & API keys
@@ -451,7 +455,7 @@ vastai run benchmarks --template_hash <hash> --gpus RTX_4090                    
 vastai set api-key <key>                                 # Save API key locally
 vastai show api-key <id>                                 # Show a specific key
 vastai show api-keys                                     # List all your API keys
-vastai create api-key --name "ci" --permission_file ./perms.json   # Create restricted key. --permission_file takes a FILE PATH to JSON, NOT inline JSON. See https://vast.ai/docs/cli/roles-and-permissions
+vastai create api-key --name "ci" --permission_file ./perms.json   # Create restricted key. --permission_file takes a FILE PATH to valid JSON (NOT inline JSON). Malformed/empty JSON returns HTTP 400 with no body — validate the file with `jq . perms.json` first. Requires an admin-scope key. See https://vast.ai/docs/cli/roles-and-permissions
 vastai delete api-key <id>
 vastai reset api-key                                     # Reset main key (get new from console)
 vastai show user                                         # Account info + credit balance
@@ -486,14 +490,15 @@ Common prompts and the calls they map to:
 
 ### Billing
 
+**One of `-c` / `--charges` or `-i` / `--invoices` is REQUIRED.** Bare `vastai show invoices-v1 --raw --limit <N> --latest-first` (without either) fails — the server needs to know which ledger to return. Always pass `--limit` too to avoid the `(y/N)` pagination prompt (cap is in `--help`).
+
 ```bash
-vastai show invoices-v1 --limit <N> --latest-first        # Always pass --limit to avoid the (y/N) pagination prompt; cap is in `--help`
-vastai show invoices-v1 --charges --limit <N> --latest-first              # Charges only
+vastai show invoices-v1 -c --limit <N> --latest-first                     # Charges (most common)
+vastai show invoices-v1 -i --limit <N> --latest-first                     # Paid invoices
 vastai show invoices-v1 -c --charge-type i v s --limit <N> --latest-first # i=instance v=volume s=serverless
-vastai show invoices-v1 --invoices --limit <N> --latest-first             # Invoices only
-vastai show invoices-v1 --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --limit <N>
+vastai show invoices-v1 -c --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --limit <N>
 vastai show invoices-v1 -c --format tree --verbose --limit <N> --latest-first  # Full details (tree only)
-vastai show invoices-v1 --next-token <TOKEN>             # Resume pagination explicitly
+vastai show invoices-v1 -c --next-token <TOKEN>          # Resume pagination explicitly
 vastai show deposit <id>                                 # Reserved instance deposit info
 ```
 
@@ -503,15 +508,17 @@ vastai show deposit <id>                                 # Reserved instance dep
 
 ### Teams
 
+**Subcommand-name version skew on team creation.** Newer CLIs expose `vastai create-team` (hyphenated, with `--team-name`); older CLIs expose `vastai create team` (with a space, taking `--team-name` or just a positional name). Before running, check which form your CLI parses: `vastai --help 2>&1 | grep -E 'create[ -]team'`. The skill below shows the hyphenated form; if the parser rejects it, drop the hyphen and retry. Either way, the flag is `--team-name`, not `--name`.
+
 ```bash
-vastai create-team --team-name "myteam"                  # NOTE: hyphenated subcommand and --team-name. NOT `create team --name`.
+vastai create-team --team-name "myteam"                  # Hyphenated subcommand on newer CLIs. If parser rejects, try `vastai create team --team-name "myteam"`.
 vastai create-team --team-name "myteam" --transfer-credit 50  # Optionally seed from personal credit
 vastai destroy team
 vastai show members
-vastai invite member --email user@example.com --role <role-name>     # --role, NOT --role-id
+vastai show team-roles                                   # ALWAYS run this first when inviting — roles are TEAM-DEFINED, not a fixed enum. "billing-admin", "viewer" etc. are NOT preset; using an unknown role name triggers a generic HTTP 500.
+vastai invite member --email user@example.com --role <role-name>     # --role, NOT --role-id. <role-name> must come from `show team-roles`.
 vastai remove member <id>
 vastai create team-role --name "viewer" --permissions ./role.json    # --permissions takes a FILE PATH to JSON, NOT inline
-vastai show team-roles
 vastai show team-role <id>
 vastai update team-role <id> --permissions ./role.json               # Same — file path
 vastai remove team-role <id>
