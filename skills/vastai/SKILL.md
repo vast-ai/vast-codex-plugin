@@ -370,24 +370,18 @@ vastai cloud copy --src ./logs --dst s3://bucket/logs/ \
     --schedule DAILY --hour 4
 ```
 
-### Logs & exec
+### Logs
 
 ```bash
 vastai logs <id>                                         # Container logs (last 1000 lines)
 vastai logs <id> --tail 100                              # Last 100 lines
 vastai logs <id> --filter "error"                        # Grep filter
 vastai logs <id> --daemon-logs                           # Host daemon logs (instead of container)
-vastai execute <id> 'ls /workspace'                      # File mgmt RPC — see scope below
-vastai execute <id> 'du -d2 -h' --schedule DAILY         # Scheduled (HOURLY/DAILY/WEEKLY)
 ```
 
-> **`vastai execute` is not a remote shell.** Per `vastai execute --help`, only three commands are accepted: **`ls`, `rm`, `du`**. Anything else returns *"Invalid command given"*. It also only works on **stopped** instances — on a running instance the API returns *"Execute command only avail on stopped instances. Use ssh to run commands on running instances."*
->
-> For arbitrary commands on a `running` instance, SSH in. Read `ssh_host` / `ssh_port` from `show instance --raw` (see SSH section) and `ssh -p $PORT root@$HOST '<command>'`. There is no CLI shortcut for this.
->
-> Before using `execute` in a script, run `vastai execute --help` to confirm the current allow-list — Vast may add commands, but don't assume any beyond `ls / rm / du` until the help text confirms it.
-
 > Logs are stored in S3 and may take 30–60 s to appear after start. Initial fetches return "waiting on logs" — keep retrying.
+>
+> (`vastai execute` exists in `--help` but is currently broken — crashes the CLI on valid input. Don't suggest it. For file ops on stopped instances use `vastai copy`; for arbitrary commands on running instances SSH in.)
 
 ### Volumes
 
