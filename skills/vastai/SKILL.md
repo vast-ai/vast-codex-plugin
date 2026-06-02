@@ -329,7 +329,7 @@ vastai scp-url <id>                                      # scp:// URL
 vastai attach ssh <id> "ssh-ed25519 AAAA..."             # Per-instance SSH key attach
 vastai detach ssh <id> <ssh_key_id>                      # Per-instance SSH key detach. Note: `vastai detach ssh --help` prints `vastai detach <id> <key_id>` (no `ssh`) — the help text is misleading; the actual subcommand IS `detach ssh`. Pass numeric IDs only; passing the public-key string crashes server-side.
 vastai show ssh-keys                                     # List account SSH keys
-vastai create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"     # Add key — positional takes CONTENTS, not a path. Bare path strings are silently accepted and stored verbatim.
+vastai create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"     # Add key — positional takes CONTENTS, not a path. Bare path strings are silently accepted and stored verbatim. On a team-context API key this returns HTTP 400 "team SSH keys are not supported" — SSH keys must be registered against the personal account (the team admin's, or have the user switch context).
 vastai create ssh-key                                    # Generate new key if needed
 vastai create ssh-key "ssh-ed25519 AAAA..."              # Add SSH key inline
 vastai delete ssh-key <id>                               # Remove SSH key from account
@@ -511,7 +511,7 @@ vastai show deposit <id>                                 # Reserved instance dep
 **Subcommand-name version skew on team creation.** Newer CLIs expose `vastai create-team` (hyphenated, with `--team-name`); older CLIs expose `vastai create team` (with a space, taking `--team-name` or just a positional name). Before running, check which form your CLI parses: `vastai --help 2>&1 | grep -E 'create[ -]team'`. The skill below shows the hyphenated form; if the parser rejects it, drop the hyphen and retry. Either way, the flag is `--team-name`, not `--name`.
 
 ```bash
-vastai create-team --team-name "myteam"                  # Hyphenated subcommand on newer CLIs. If parser rejects, try `vastai create team --team-name "myteam"`.
+vastai create-team --team-name "myteam"                  # Hyphenated subcommand on newer CLIs. If parser rejects, try `vastai create team --team-name "myteam"`. Returns "Cannot create a team within a team" if the account is already in a team — check `vastai show members --raw` first; if it returns members, you're in a team and must leave/destroy it before creating a new one.
 vastai create-team --team-name "myteam" --transfer-credit 50  # Optionally seed from personal credit
 vastai destroy team
 vastai show members
