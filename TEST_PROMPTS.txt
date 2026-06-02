@@ -15,11 +15,18 @@
 # benchmarks. That is fine. Just clean up after (destroy instances, delete
 # the test team, revoke the test API key, etc.). Budget a few dollars.
 #
-# Placeholders: <OFFER_ID>, <INSTANCE_ID>, <SPOT_INSTANCE_ID>. Pick a real
-# offer from `vastai search offers ...` and a real instance from `vastai
-# show instances-v1 --raw -a` before running the rows that need them. For
-# <SPOT_INSTANCE_ID> you need a spot instance (launched with --bid_price);
-# if you don't have one, run the spot-launch prompt first.
+# Placeholders — substitute REAL values before pasting; never use fake
+# numbers ("12345" / "abc123" / "endpoint 4567"), because the prompt then
+# fails for an unrelated reason and tells you nothing about the skill.
+#
+# <OFFER_ID>          → real offer from `vastai search offers ... --raw`
+# <INSTANCE_ID>       → real instance from `vastai show instances-v1 --raw -a`
+# <SPOT_INSTANCE_ID>  → real spot instance (launched with --bid_price). If
+#                       you don't have one, run the spot-launch prompt first.
+# <TEMPLATE_HASH>     → real hash from `vastai search templates ... --raw`
+# <ENDPOINT_ID>       → real endpoint id from `vastai show endpoints --raw`
+#                       (these require admin-scope keys; skip the prompt if
+#                       no real value is reachable)
 
 
 I need to create a Vast.ai API key — give me the link.
@@ -64,9 +71,11 @@ Activate 2FA on my account using my TOTP secret.
 
 Create a host-type subaccount called "ops-bot" for our ops team.
 
-Create a serverless workergroup for endpoint 4567 using template hash abc123.
+Create a serverless workergroup for endpoint <ENDPOINT_ID> using template hash <TEMPLATE_HASH>.
 
-Benchmark template abc123 across 1, 2, and 4 GPUs.
+Benchmark template <TEMPLATE_HASH> across 1, 2, and 4 GPUs.
+
+Delete template <TEMPLATE_HASH>.
 
 /prompts:vast-setup
 
