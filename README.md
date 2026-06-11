@@ -1,9 +1,11 @@
 # vast-codex-plugin
 
-A [Codex](https://developers.openai.com/codex) plugin for [Vast.ai](https://vast.ai). Rent, launch, monitor, and tear down GPU instances — plus volumes, serverless endpoints, and billing.
+A [Codex](https://developers.openai.com/codex) plugin for [Vast.ai](https://vast.ai). Rent, launch, monitor, and tear down GPU instances — plus volumes, serverless endpoints, and billing. Hosts can also manage their machines, pricing, maintenance windows, and earnings.
 
 - **Five custom prompts** wrap common rental operations with safe defaults.
-- **A bundled `vastai` skill** gives Codex full command-reference knowledge of the `vastai` CLI, so anything the prompts don't cover (ssh, copy, logs, exec, destroy, volumes, serverless, environment variables, …) works through natural language.
+- **Two bundled skills** give Codex full command-reference knowledge of the `vastai` CLI:
+  - **`vastai`** — renter operations: search and launch instances, SSH, copy, logs, exec, destroy, volumes, serverless, env vars, billing.
+  - **`vastai-host`** — GPU provider operations: list/unlist machines, pricing, maintenance windows, self-tests, earnings, marketplace metrics. Auto-loads on host-intent prompts.
 
 ## Custom prompts
 
@@ -19,7 +21,9 @@ Every `vastai` invocation includes `--raw` so responses come back as parseable J
 
 ## Natural language
 
-The bundled `vastai` skill auto-loads when Codex detects Vast-related intent — GPU rental, SSH, copying files to/from an instance, env vars, billing, serverless, volumes, and so on.
+The right skill auto-loads based on intent.
+
+**Renter prompts** load `vastai`:
 
 > *"Find a verified 4090 under $0.40/hr and launch it with pytorch."*
 >
@@ -29,7 +33,17 @@ The bundled `vastai` skill auto-loads when Codex detects Vast-related intent —
 >
 > *"Destroy everything except instance 12345."*
 
-To force the skill to load explicitly, mention it by name (*"using the vastai skill, …"*).
+**Host prompts** load `vastai-host`:
+
+> *"List my machine 98765 at $0.30/GPU/hr."*
+>
+> *"Schedule maintenance on machine 98765 next Tuesday at 02:00 UTC for 4 hours."*
+>
+> *"Show my host earnings for last month."*
+>
+> *"What's the going rate for RTX 4090s in the US right now?"*
+
+To force a skill to load explicitly, mention it by name (*"using the vastai skill, …"* or *"using the vastai-host skill, …"*).
 
 ## Install
 
@@ -40,7 +54,7 @@ pip install vastai          # the vastai CLI itself (1.0.x or newer)
 vastai --version
 ```
 
-A working Vast.ai account; grab an API key from <https://cloud.vast.ai/account>.
+A working Vast.ai account; grab an API key from <https://console.vast.ai/manage-keys/>.
 
 ### From source
 
@@ -50,7 +64,7 @@ cd vast-codex-plugin
 ./install.sh
 ```
 
-That copies the skill into `~/.agents/skills/vastai/` and the prompts into `~/.codex/prompts/`. Restart your Codex session (CLI or IDE extension) to pick them up.
+That copies both skills into `~/.agents/skills/vastai/` and `~/.agents/skills/vastai-host/`, and the prompts into `~/.codex/prompts/`. Restart your Codex session (CLI or IDE extension) to pick them up.
 
 `./install.sh --force` to upgrade in place. `./install.sh --dry-run` to preview.
 
@@ -60,25 +74,24 @@ That copies the skill into `~/.agents/skills/vastai/` and the prompts into `~/.c
 /prompts:vast-setup
 ```
 
-You'll be prompted for an API key from <https://cloud.vast.ai/account>. The walkthrough then registers your SSH public key (`~/.ssh/id_ed25519.pub` by default, falling back to `id_rsa.pub`) and verifies the credential by querying your user record.
+You'll be prompted for an API key from <https://console.vast.ai/manage-keys/>. The walkthrough then registers your SSH public key (`~/.ssh/id_ed25519.pub` by default, falling back to `id_rsa.pub`) and verifies the credential by querying your user record.
 
 ## Layout
 
 ```
 vast-codex-plugin/
-├── install.sh                   # installs into ~/.agents/ and ~/.codex/
-├── skills/vastai/
-│   └── SKILL.md                 # vendored from vast-ai/vast-cli
-├── prompts/
-│   ├── vast-setup.md            # /prompts:vast-setup
-│   ├── vast-status.md           # /prompts:vast-status
-│   ├── vast-cost.md             # /prompts:vast-cost
-│   ├── vast-search.md           # /prompts:vast-search
-│   └── vast-launch.md           # /prompts:vast-launch
-├── VENDORED_FROM.md             # pins the upstream SHA
-└── PATCHES.md                   # local deltas pending upstream PRs
+├── install.sh                    # installs into ~/.agents/ and ~/.codex/
+├── skills/
+│   ├── vastai/SKILL.md           # renter skill
+│   └── vastai-host/SKILL.md      # GPU provider / host skill
+└── prompts/
+    ├── vast-setup.md             # /prompts:vast-setup
+    ├── vast-status.md            # /prompts:vast-status
+    ├── vast-cost.md              # /prompts:vast-cost
+    ├── vast-search.md            # /prompts:vast-search
+    └── vast-launch.md            # /prompts:vast-launch
 ```
 
 ## License
 
-MIT — see [LICENSE](./LICENSE). `SKILL.md` is vendored from [`vast-ai/vast-cli`](https://github.com/vast-ai/vast-cli) (also MIT); local edits are tracked in [`PATCHES.md`](./PATCHES.md) for upstream propagation.
+MIT — see [LICENSE](./LICENSE).

@@ -1,0 +1,98 @@
+# How to use this file
+#
+# Paste prompts into a fresh codex chat one at a time. Each line is a real
+# task; the agent's response (and any commands it runs) is the test.
+#
+# Run against a LIVE Vast.ai account with real credentials. Do NOT verify
+# by running `vastai <cmd> --help` — that just re-confirms the source the
+# skill was already audited against, so it tells us nothing. The whole point
+# is whether the command actually executes against the live server and
+# returns useful output. (The recent `vastai execute` discovery — accepts
+# the syntax per --help, then crashes on real input — is exactly why.)
+#
+# Some prompts will spend money or mutate the account: launching instances,
+# placing bids, creating teams/subaccounts, inviting members, running
+# benchmarks. That is fine. Just clean up after (destroy instances, delete
+# the test team, revoke the test API key, etc.). Budget a few dollars.
+#
+# Placeholders — substitute REAL values before pasting; never use fake
+# numbers ("12345" / "abc123" / "endpoint 4567"), because the prompt then
+# fails for an unrelated reason and tells you nothing about the skill.
+#
+# <OFFER_ID>          → real offer from `vastai search offers ... --raw`
+# <INSTANCE_ID>       → real instance from `vastai show instances-v1 --raw -a`
+# <SPOT_INSTANCE_ID>  → real spot instance (launched with --bid_price). If
+#                       you don't have one, run the spot-launch prompt first.
+# <TEMPLATE_HASH>     → real hash from `vastai search templates '...' --raw`
+# <TEMPLATE_ID>       → real numeric `id` field from `vastai search templates`
+# <ENDPOINT_ID>       → real endpoint id from `vastai show endpoints --raw`
+#                       (these require admin-scope keys; skip the prompt if
+#                       no real value is reachable)
+#
+# Notes on a few prompts:
+#  - The spot/bid launch prompt picks the bid AT OR ABOVE the offer's
+#    `min_bid` field. Don't hardcode a number; the agent should read min_bid
+#    first.
+#  - "Display HF_TOKEN value" tests the correct refusal (CLI returns masked
+#    values; the skill says env-vars are write-only). PASS = explains that;
+#    FAIL = attempts a flag or workaround.
+#  - "Activate 2FA" needs interactive input from the real shell — agents
+#    can't complete it standalone. PASS = walks the user through the command
+#    and stops; FAIL = pastes a literal TOTP code.
+
+
+I need to create a Vast.ai API key — give me the link.
+
+Register my `~/.ssh/id_ed25519.pub` public key with vastai.
+
+Show me all Vast offers including unverified hosts and ones currently rented.
+
+Find the cheapest single-GPU offer with CUDA 7.0 or higher under $0.50/hr.
+
+Find pytorch templates in the Vast template marketplace.
+
+Sort my recent invoices newest first.
+
+Launch a Vast instance from offer <OFFER_ID>.
+
+Launch offer <OFFER_ID> with an --onstart-cmd that installs a long list of apt packages, clones two repos, and runs a setup script.
+
+Launch the cheapest interruptible (spot) RTX 3090 — pick the bid at or just above the offer's min_bid.
+
+List all of my Vast instances.
+
+ssh into instance <INSTANCE_ID>.
+
+List the files in /workspace on stopped instance <INSTANCE_ID>.
+
+Set the label of instance <INSTANCE_ID> to "training-run-3".
+
+Change the bid price on instance <SPOT_INSTANCE_ID> to $0.15/hr.
+
+Create a CI-only Vast API key that can read but not destroy or launch.
+
+Create a template for my pytorch training image with 100GB disk.
+
+Display the actual value of my HF_TOKEN account env var.
+
+Create a new team called "platform-team".
+
+Invite alice@example.com to my team — pick any role from `vastai show team-roles`.
+
+Activate 2FA on my account using my TOTP secret.
+
+Create a host-type subaccount called "ops-bot" for our ops team.
+
+Create a serverless workergroup for endpoint <ENDPOINT_ID> using template hash <TEMPLATE_HASH>.
+
+Benchmark template <TEMPLATE_HASH> across 1, 2, and 4 GPUs.
+
+Delete template <TEMPLATE_ID>.
+
+/prompts:vast-setup
+
+/prompts:vast-cost
+
+/prompts:vast-status
+
+/prompts:vast-search gpu_name=RTX_4090
