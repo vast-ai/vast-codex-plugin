@@ -1,0 +1,21 @@
+{
+  "name": "vastai",
+  "interface": {
+    "displayName": "Vast.ai"
+  },
+  "plugins": [
+    {
+      "name": "vastai",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/vast-ai/vast-codex-plugin.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
